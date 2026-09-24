@@ -1,5 +1,11 @@
 pipeline {
   agent any
+  agent any
+  environment {
+    JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
+    PATH = "${JAVA_HOME}/bin:${PATH}"
+  }
+  
   parameters {
     booleanParam(name: 'BREAK_CANARY', defaultValue: false, description: 'Simulate a bad release')
   }
