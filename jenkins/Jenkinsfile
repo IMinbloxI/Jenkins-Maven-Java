@@ -61,7 +61,7 @@ pipeline {
             steps {
                 sh './set-canary.sh 100'
                 sh 'docker rm -f stable || true'
-                sh "docker run -d --name stable --network demo-net -p 8081:8080 -e APP_VERSION=v1 demo-app:${BUILD_NUMBER}"
+                sh "docker run -d --name stable --network demo-net -e APP_VERSION=v${BUILD_NUMBER} demo-app:${BUILD_NUMBER}"
                 sh 'sleep 5'
                 sh './set-canary.sh 0'
             }
