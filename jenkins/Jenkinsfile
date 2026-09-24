@@ -1,77 +1,77 @@
 pipeline {
-  agent any
-  agent any
-  environment {
-    JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
-    PATH = "${JAVA_HOME}/bin:${PATH}"
-  }
+    agent any
+
+    environment {
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
+        PATH = "${JAVA_HOME}/bin:${PATH}"
+    }
   
-  parameters {
-    booleanParam(name: 'BREAK_CANARY', defaultValue: false, description: 'Simulate a bad release')
-  }
-
-  stages {
-    stage('Build & Test') {
-      steps { sh 'mvn -B clean verify' }
+    parameters {
+        booleanParam(name: 'BREAK_CANARY', defaultValue: false, description: 'Simulate a bad release')
     }
 
-    stage('Build Image') {
-      steps { sh "docker build -t demo-app:${BUILD_NUMBER} ." }
-    }
-
-    stage('Deploy Canary (10%)') {
-      steps {
-        sh 'docker rm -f canary || true'
-        sh "docker run -d --name canary --network demo-net -p 8082:8080 -e APP_VERSION=v${BUILD_NUMBER} -e FAIL=${params.BREAK_CANARY} demo-app:${BUILD_NUMBER}"
-        sh 'sleep 5'
-        sh './set-canary.sh 10'
-      }
-    }
-
-    stage('Monitor Canary') {
-      steps {
-        script {
-          int errors = 0
-          int total = 50
-          for (int i = 0; i < total; i++) {
-            def code = sh(script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8082/",
-                          returnStdout: true).trim()
-            if (code != '200') { errors++ }
-          }
-          echo "Canary error rate: ${errors * 100 / total}%"
-          if (errors * 100 / total > 5) { error('Canary error rate above 5%') }
+    stages {
+        stage('Build & Test') {
+            steps { sh 'mvn -B clean verify' }
         }
-      }
+
+        stage('Build Image') {
+            steps { sh "docker build -t demo-app:${BUILD_NUMBER} ." }
+        }
+
+        stage('Deploy Canary (10%)') {
+            steps {
+                sh 'docker rm -f canary || true'
+                sh "docker run -d --name canary --network demo-net -p 8082:8080 -e APP_VERSION=v${BUILD_NUMBER} -e FAIL=${params.BREAK_CANARY} demo-app:${BUILD_NUMBER}"
+                sh 'sleep 5'
+                sh './set-canary.sh 10'
+            }
+        }
+
+        stage('Monitor Canary') {
+            steps {
+                script {
+                    int errors = 0
+                    int total = 50
+                    for (int i = 0; i < total; i++) {
+                        def code = sh(script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8082/",
+                                      returnStdout: true).trim()
+                        if (code != '200') { errors++ }
+                    }
+                    echo "Canary error rate: ${errors * 100 / total}%"
+                    if (errors * 100 / total > 5) { error('Canary error rate above 5%') }
+                }
+            }
+        }
+
+        stage('Approve 50%') {
+            steps { input message: 'Canary looks healthy. Promote to 50%?', ok: 'Promote' }
+        }
+
+        stage('Canary 50%') {
+            steps { sh './set-canary.sh 50' }
+        }
+
+        stage('Approve Full Rollout') {
+            steps { input message: 'Roll out to 100%?', ok: 'Roll out' }
+        }
+
+        stage('Full Rollout (100%)') {
+            steps {
+                sh './set-canary.sh 100'
+                sh 'docker rm -f stable || true'
+                sh "docker run -d --name stable --network demo-net -e APP_VERSION=v${BUILD_NUMBER} demo-app:${BUILD_NUMBER}"
+                sh 'sleep 5'
+                sh './set-canary.sh 0'
+            }
+        }
     }
 
-    stage('Approve 50%') {
-      steps { input message: 'Canary looks healthy. Promote to 50%?', ok: 'Promote' }
+    post {
+        failure {
+            sh './set-canary.sh 0 || true'
+            sh 'docker rm -f canary || true'
+            echo 'ROLLED BACK: 100% of traffic is on the stable version'
+        }
     }
-
-    stage('Canary 50%') {
-      steps { sh './set-canary.sh 50' }
-    }
-
-    stage('Approve Full Rollout') {
-      steps { input message: 'Roll out to 100%?', ok: 'Roll out' }
-    }
-
-    stage('Full Rollout (100%)') {
-      steps {
-        sh './set-canary.sh 100'
-        sh 'docker rm -f stable || true'
-        sh "docker run -d --name stable --network demo-net -e APP_VERSION=v${BUILD_NUMBER} demo-app:${BUILD_NUMBER}"
-        sh 'sleep 5'
-        sh './set-canary.sh 0'
-      }
-    }
-  }
-
-  post {
-    failure {
-      sh './set-canary.sh 0 || true'
-      sh 'docker rm -f canary || true'
-      echo 'ROLLED BACK: 100% of traffic is on the stable version'
-    }
-  }
 }
